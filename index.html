@@ -223,7 +223,7 @@ label{display:block; font-size:.85rem; font-weight:700; color:var(--muted); marg
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyCmsgPO8hMJAaVA2gSPKz91FPmTKqlQBWg",
   authDomain: "jogo-mulheres-de-fe.firebaseapp.com",
-  databaseURL: "https://jogo-mulheres-de-fe-default-rtdb.southamerica-east1.firebasedatabase.app",
+  databaseURL: "https://jogo-mulheres-de-fe-default-rtdb.firebaseio.com",
   projectId: "jogo-mulheres-de-fe",
   storageBucket: "jogo-mulheres-de-fe.firebasestorage.app",
   messagingSenderId: "1071816768129",
@@ -502,14 +502,14 @@ function rankingHTML(equipes, t, parts){
 /* ===================== CONDUTOR ===================== */
 let code = null, sala = null, salaCarregada = false, unsub = null;
 let setup = LS.get('mdf_setup2', null) || { nomes:['Equipe 1','Equipe 2'], sel: PADRAO.map(p => p.id) };
-if (!Array.isArray(setup.parts)) setup.parts = PARTICIPANTES_PADRAO.map(p => ({ id:p.id, nome:p.nome, equipe:'' }));
+setup.parts = PARTICIPANTES_PADRAO.map(p => ({ id:p.id, nome:p.nome, equipe: ((setup.parts || []).find(x => x.id === p.id) || {}).equipe || '' }));
 setup.sel = PADRAO.map(p => p.id).filter(id => (setup.sel || []).includes(id));
 if (!setup.sel.length) setup.sel = PADRAO.map(p => p.id);
 const salvarSetup = () => LS.set('mdf_setup2', setup);
 const fotosExtra = () => LS.get('mdf_fotos2', {});
 function participantes(){
   const ex = fotosExtra();
-  return setup.parts.map(p => { const pd = PARTICIPANTES_PADRAO.find(x => x.id === p.id); return { id:p.id, nome:p.nome, equipe:p.equipe || '', foto: ex[p.id] || (pd && pd.foto) || '' }; });
+  return setup.parts.map(p => { const pd = PARTICIPANTES_PADRAO.find(x => x.id === p.id); return { id:p.id, nome:p.nome, equipe:p.equipe || '', foto: (pd && pd.foto) || '' }; });
 }
 function reduzirFoto(file, cb){
   const img = new Image(); const u = URL.createObjectURL(file);
@@ -559,13 +559,10 @@ function renderSetup(){
   <header class="topo"><span class="marca">Mulheres de Fé</span><span class="tag">Condutor</span><span class="sp"></span>${avisoModo()}</header>
   <main class="wrap">
     <section class="card">
-      <div class="linha" style="margin-top:0"><h2>Participantes</h2><span class="muted">toque na equipe de cada uma</span><span class="sp"></span>
-        <button data-a="addPart">+ Participante</button></div>
+      <div class="linha" style="margin-top:0"><h2>Participantes</h2><span class="muted">toque na equipe de cada uma</span></div>
       <div class="part-grade">${participantes().map(p => `
         <div class="part ${p.equipe}">
-          ${p.id.startsWith('x') ? `<button class="x mini-btn" data-a="delPart" data-id="${p.id}" title="Remover">✕</button>` : ''}
           ${avatar(p)}<b>${esc(p.nome)}</b>
-          <label class="foto-btn">trocar foto<input type="file" accept="image/*" data-foto="${p.id}" hidden></label>
           <div class="eqs">${[0,1].map(i => `<button class="${p.equipe === 'e' + (i + 1) ? 'on' : ''}" style="--cor:${PALETA[i]}" data-a="eqPart" data-id="${p.id}" data-e="e${i + 1}">${esc((setup.nomes[i] || 'Equipe ' + (i + 1)).slice(0, 12))}</button>`).join('')}</div>
         </div>`).join('')}
       </div>
@@ -679,9 +676,17 @@ function criarPartida(){
   const L = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; let c = ''; for (let i = 0; i < 4; i++) c += L[Math.floor(Math.random() * L.length)];
   const equipes = [0,1].map(i => ({ id:'e' + (i + 1), nome:(setup.nomes[i] || '').trim() || `Equipe ${i + 1}`, cor:PALETA[i] }));
   const conteudo = PADRAO.filter(p => setup.sel.includes(p.id)).map(p => conteudoSala(p.id));
-  Sync.set('salas/' + c, { criada: Date.now(), equipes, conteudo, participantes: participantes().map(({ nome, foto, equipe }) => ({ nome, foto, equipe })), estado:{ fase:'lobby', idx:0, dica:1 } }).then(() => {
-    LS.set('mdf_sala2', c); conectarSala(c);
-  }).catch(err => alert('Não foi possível criar a partida: ' + err.message));
+  const btn = document.querySelector('[data-a="criar"]'); if (btn){ btn.disabled = true; btn.textContent = 'Criando…'; }
+  const volta = () => { if (btn){ btn.disabled = false; btn.textContent = 'Criar partida ▸'; } };
+  const espera = setTimeout(() => {
+    volta();
+    alert('O banco de dados não respondeu.\n\nConfira no Firebase:\n1) Realtime Database criado;\n2) Regras publicadas: { "rules": { "salas": { ".read": true, ".write": true } } };\n3) O endereço do banco (topo da aba Dados) é igual ao databaseURL do index.html:\n' + (FIREBASE_CONFIG && FIREBASE_CONFIG.databaseURL));
+  }, 10000);
+  let p;
+  try { p = Sync.set('salas/' + c, { criada: Date.now(), equipes, conteudo, participantes: participantes().map(({ nome, foto, equipe }) => ({ nome, foto, equipe })), estado:{ fase:'lobby', idx:0, dica:1 } }); }
+  catch (err) { clearTimeout(espera); volta(); alert('Não foi possível criar a partida: ' + err.message); return; }
+  p.then(() => { clearTimeout(espera); LS.set('mdf_sala2', c); conectarSala(c); })
+   .catch(err => { clearTimeout(espera); volta(); alert('Não foi possível criar a partida: ' + err.message + (/permission/i.test(err.message) ? '\n\nPublique as regras do banco no Firebase (aba Regras).' : '')); });
 }
 function sortear(q){
   const P = atual(); const est = sala.estado;
@@ -998,8 +1003,6 @@ document.addEventListener('click', e => {
     case 'limpar': setup.sel = []; salvarSetup(); renderSetup(); break;
     case 'criar': criarPartida(); break;
     case 'eqPart': { const p = setup.parts.find(x => x.id === b.dataset.id); if (p){ p.equipe = p.equipe === b.dataset.e ? '' : b.dataset.e; salvarSetup(); renderSetup(); } break; }
-    case 'addPart': { const nome = (prompt('Nome da participante:') || '').trim(); if (nome){ setup.parts.push({ id:'x' + Date.now().toString(36), nome, equipe:'' }); salvarSetup(); renderSetup(); } break; }
-    case 'delPart': if (confirm('Remover esta participante?')){ setup.parts = setup.parts.filter(x => x.id !== b.dataset.id); const ex = fotosExtra(); delete ex[b.dataset.id]; LS.set('mdf_fotos2', ex); salvarSetup(); renderSetup(); } break;
     case 'editor': renderEditor(); break;
     case 'fecharEditor': lerEditor(); modal.innerHTML = ''; if (!code) renderSetup(); break;
     case 'edSel': lerEditor(); edSel = b.dataset.id; renderEditor(); break;
